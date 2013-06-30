@@ -8,6 +8,8 @@ local bor = bit.bor
 local band = bit.band
 local rshift = bit.rshift
 local tblcon = table.concat
+local strsub = string.sub
+local strfind = string.find
 
 -- Byte level functions
 local function tobyte4(n)
@@ -37,11 +39,11 @@ local parse = {
 		local data = sock:receive(len-4)
 		local pos = 1
 		while true do
-			local code = string.sub(data,pos,pos)
+			local code = strsub(data,pos,pos)
 			pos = pos+1
-			local zero = string.find(data,"\0",pos)
+			local zero = strfind(data,"\0",pos)
 			if zero == nil then break end
-			local str = string.sub(data,pos,zero-1)
+			local str = strsub(data,pos,zero-1)
 			pos = zero+1
 			result[code] = str
 		end
@@ -74,8 +76,8 @@ local parse = {
 		local res = {}
 		local pos = 3
 		for i=1,rows do
-			local zero = string.find(data,"\0",pos)
-			res[i] = string.sub(data,pos,zero-1)
+			local zero = strfind(data,"\0",pos)
+			res[i] = strsub(data,pos,zero-1)
 			pos = zero+19
 		end
 		return res
@@ -89,7 +91,7 @@ local parse = {
 		local res = {}
 		for i=1,rows do
 			local len = parsebyte4(data,pos)
-			res[i] = string.sub(data,pos+4,pos+3+len)
+			res[i] = strsub(data,pos+4,pos+3+len)
 			pos = pos+4+len
 		end
 		return res
@@ -98,7 +100,7 @@ local parse = {
 	C = function(sock)
 		local len = parsebyte4(sock:receive(4),1)
 		local data = sock:receive(len-4)
-		local zero = string.find(data, "\0")
+		local zero = strfind(data, "\0")
 		return true
 	end,
 	-- ReadyForQuery
@@ -172,7 +174,7 @@ local build = {
 local function connect(host, user, db, port)
 	local sock = ngx.socket.tcp()
 	sock:settimeout(500) -- 500 ms should be plenty of time
-	if string.sub(host,1,4) == "unix" then
+	if strsub(host,1,4) == "unix" then
 		assert(sock:connect("unix:/run/postgresql/.s.PGSQL.5432", { pool = "unix:/run/postgresql/.s.PGSQL.5432:"..db } ) )
 	else
 		assert(sock:connect(host,port, { pool = host..tostring(port)..db }))
