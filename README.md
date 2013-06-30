@@ -10,7 +10,7 @@ local db = pg.connect("unix:/run/postgresql/.s.PGSQL.5432", "user", "db")
 for k,v in pairs(db:query("SELECT * FROM test;")) do
 	print(v.column)
 end
-db:disconnect()
+db:disconnect() -- Puts connection into connection pool (sock:setkeepalive())
 ````
 
 ## API
