@@ -245,7 +245,7 @@ local function connect(host, user, db, port)
 					for k,v in ipairs(assert(parse[data](self._sock))) do
 						res[fieldNames[k]] = v
 					end
-					table.insert(result,res)
+					result[#result+1] = res
 				else
 					assert(parse[data](self._sock))
 				end
