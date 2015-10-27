@@ -1,12 +1,11 @@
 ## Intro
-Not production ready!!!
 Implements postgresql protocol, does not use any library.
 Nonblocking via [lua-nginx-module](https://github.com/chaoslawful/lua-nginx-module)'s socket api.
 
 ## Example
 ````lua
 local pg = require("pg")
-local db = pg.connect("unix:/run/postgresql/.s.PGSQL.5432", "user", "db")
+local db = pg.connect("unix:/run/postgresql/.s.PGSQL.5432", "user", "password", "db")
 for k,v in pairs(db:query("SELECT * FROM test;")) do
 	print(v.column)
 end
