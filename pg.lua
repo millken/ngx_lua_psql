@@ -1,4 +1,4 @@
--- Implements postgresql support, tested against 9.2.4
+-- Implements postgresql support, tested against 9.4.5
 -- Doesn't use a library of any kind,
 -- this speaks the raw protocol
 local strchar = string.char
@@ -28,96 +28,6 @@ end
 local function parsebyte2(data, i)
 	local a, b = strbyte(data, i, i + 1)
 	return bor(b, lshift(a, 8))
-end
-
-
-local parse = {
-	--Error
-	E = function(sock)
-		local result = {}
-		local len = parsebyte4(sock:receive(4),1)
-		local data = sock:receive(len-4)
-		local pos = 1
-		while true do
-			local code = strsub(data,pos,pos)
-			pos = pos+1
-			local zero = strfind(data,"\0",pos)
-			if zero == nil then break end
-			local str = strsub(data,pos,zero-1)
-			pos = zero+1
-			result[code] = str
-		end
-		error(result.M)
-		return false, result.M
-	end,
-	-- One of the Authentication msgs, we only support AuthenticationOK
-	R = function(sock)
-		local len = parsebyte4(sock:receive(4),1)
-		local data = sock:receive(len-4)
-		-- 0 is AuthenticationOK, we don't do any other auth
-		if parsebyte4(data,1) ~= 0 then error("THIS AUTHENTICATION METHOD IS NOT SUPPORTED") end
-		return true
-	end,
-	-- ParameterStatus, we don't try to understand this
-	S = function(sock)
-		sock:receive(parsebyte4(sock:receive(4),1)-4)
-		return true
-	end,
-	-- BackendKeyData, don't care
-	K = function(sock)
-		sock:receive(4+4+4)
-		return true
-	end,
-	-- RowDescription
-	T = function(sock)
-		local len = parsebyte4(sock:receive(4),1)
-		local data = assert(sock:receive(len-4))
-		local rows = parsebyte2(data,1)
-		local res = {}
-		local pos = 3
-		for i=1,rows do
-			local zero = strfind(data,"\0",pos)
-			res[i] = strsub(data,pos,zero-1)
-			pos = zero+19
-		end
-		return res
-	end,
-	-- DataRow
-	D = function(sock)
-		local len = parsebyte4(sock:receive(4),1)
-		local data = sock:receive(len-4)
-		local pos = 3
-		local rows = parsebyte2(data,1)
-		local res = {}
-		for i=1,rows do
-			local len = parsebyte4(data,pos)
-			res[i] = strsub(data,pos+4,pos+3+len)
-			pos = pos+4+len
-		end
-		return res
-	end,
-	-- CommandComplete
-	C = function(sock)
-		local len = parsebyte4(sock:receive(4),1)
-		local data = sock:receive(len-4)
-		local zero = strfind(data, "\0")
-		return true
-	end,
-	-- ReadyForQuery
-	Z = function(sock)
-		assert(sock:receive(5))
-		return true
-	end
-}
--- ParseComplete
-parse["1"] = function(sock)
-	sock:receive(4)
-	return true
-end
-
-parse["2"] = function(sock)
-	sock:receive(4)
-	return true
 end
 
 local build = {
@@ -168,10 +78,106 @@ local build = {
 	end,
 	Query = function(str)
 		return "Q"..tobyte4(5+#str)..str.."\0"
-	end
+	end,
+	PasswordMessage = function(str)
+		return "p"..tobyte4(5+#str)..str.."\0"
+	end,
 }
 
-local function connect(host, user, db, port)
+local parse = {
+	--Error
+	E = function(sock)
+		local result = {}
+		local len = parsebyte4(sock:receive(4),1)
+		local data = sock:receive(len-4)
+		local pos = 1
+		while true do
+			local code = strsub(data,pos,pos)
+			pos = pos+1
+			local zero = strfind(data,"\0",pos)
+			if zero == nil then break end
+			local str = strsub(data,pos,zero-1)
+			pos = zero+1
+			result[code] = str
+		end
+		error(result.M)
+		return false, result.M
+	end,
+	-- One of the Authentication msgs, we only support AuthenticationOK
+	R = function(sock, user, password)
+		local len = parsebyte4(sock:receive(4),1)
+		local data = sock:receive(len-4)
+		local authType = parsebyte4(data,1)
+		if authType == 0 then -- AuthenticationOK
+			return true
+		elseif authType == 3 then --AuthenticationCleartextPassword
+			assert(sock:send(build.PasswordMessage(password)))
+			return true
+		else error("AUTH METHOD "..tostring(authType).." IS NOT SUPPORTED") end
+	end,
+	-- ParameterStatus, we don't try to understand this
+	S = function(sock)
+		sock:receive(parsebyte4(sock:receive(4),1)-4)
+		return true
+	end,
+	-- BackendKeyData, don't care
+	K = function(sock)
+		sock:receive(4+4+4)
+		return true
+	end,
+	-- RowDescription
+	T = function(sock)
+		local len = parsebyte4(sock:receive(4),1)
+		local data = assert(sock:receive(len-4))
+		local rows = parsebyte2(data,1)
+		local res = {}
+		local pos = 3
+		for i=1,rows do
+			local zero = strfind(data,"\0",pos)
+			res[i] = strsub(data,pos,zero-1)
+			pos = zero+19
+		end
+		return res
+	end,
+	-- DataRow
+	D = function(sock)
+		local len = parsebyte4(sock:receive(4),1)
+		local data = sock:receive(len-4)
+		local pos = 3
+		local rows = parsebyte2(data,1)
+		local res = {}
+		for i=1,rows do
+			local len = parsebyte4(data,pos)
+			res[i] = strsub(data,pos+4,pos+3+len)
+			pos = pos+4+len
+		end
+		return res
+	end,
+	-- CommandComplete
+	C = function(sock)
+		local len = parsebyte4(sock:receive(4),1)
+		local data = sock:receive(len-4)
+		local zero = strfind(data, "\0")
+		return true
+	end,
+	-- ReadyForQuery
+	Z = function(sock)
+		assert(sock:receive(5))
+		return true
+	end,
+	-- ParseComplete
+	["1"] = function(sock)
+		sock:receive(4)
+		return true
+	end,
+
+	["2"] = function(sock)
+		sock:receive(4)
+		return true
+	end,
+}
+
+local function connect(host, user, password, db, port)
 	local sock = ngx.socket.tcp()
 	sock:settimeout(500) -- 500 ms should be plenty of time
 	if strsub(host,1,4) == "unix" then
@@ -194,11 +200,9 @@ local function connect(host, user, db, port)
 			tobyte4(bit.bor(bit.lshift(3,16),0)),
 			packet})
 		sock:send(packet)
-		local data,err,partial = sock:receive(1)
-		parse[data](sock)
 		repeat
-			local data,err,partial = sock:receive(1)
-			assert(parse[data](sock))
+			local data,err,partial = assert(sock:receive(1))
+			assert(parse[data](sock, user, password, db))
 		until data == "Z"
 	end
 	return setmetatable({_sock=sock},{ __index = {
