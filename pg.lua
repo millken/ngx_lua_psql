@@ -11,6 +11,19 @@ local tblcon = table.concat
 local strsub = string.sub
 local strfind = string.find
 
+-- Try to load luapower's md5, if unsuccesful, authenticating with MD5 will be impossible
+local md5Available,md5 = pcall(require, 'md5')
+
+-- Snippet from luapower's glue.lua
+local function tohex(s)
+	if type(s) == 'number' then
+		return string.format('%08.8x', s)
+	end
+	return (s:gsub('.', function(c)
+		return string.format('%02x', string.byte(c))
+	end))
+end
+
 -- Byte level functions
 local function tobyte4(n)
 	return strchar(band(rshift(n,24),0xff), band(rshift(n,16),0xff), band(rshift(n,8),0xff), band(n,0xff))
@@ -103,7 +116,7 @@ local parse = {
 		error(result.M)
 		return false, result.M
 	end,
-	-- One of the Authentication msgs, we only support AuthenticationOK
+	-- One of the authentication msgs
 	R = function(sock, user, password)
 		local len = parsebyte4(sock:receive(4),1)
 		local data = sock:receive(len-4)
@@ -112,6 +125,10 @@ local parse = {
 			return true
 		elseif authType == 3 then --AuthenticationCleartextPassword
 			assert(sock:send(build.PasswordMessage(password)))
+			return true
+		elseif authType == 5 and md5Available then -- AuthenticationMD5Password
+			local salt = string.sub(data,5,#data)
+			assert(sock:send(build.PasswordMessage("md5"..tohex(md5.sum(tohex(md5.sum(password..user))..salt)))))
 			return true
 		else error("AUTH METHOD "..tostring(authType).." IS NOT SUPPORTED") end
 	end,
@@ -199,67 +216,67 @@ local function connect(host, user, password, db, port)
 			tobyte4(4+4+#packet),
 			tobyte4(bit.bor(bit.lshift(3,16),0)),
 			packet})
-		sock:send(packet)
-		repeat
-			local data,err,partial = assert(sock:receive(1))
-			assert(parse[data](sock, user, password, db))
-		until data == "Z"
-	end
-	return setmetatable({_sock=sock},{ __index = {
-		prepare = function(self,name,query)
-			assert(self._sock:send(build.Parse(name,query)..build.Sync()))
+			sock:send(packet)
 			repeat
 				local data,err,partial = assert(sock:receive(1))
-				assert(parse[data](self._sock))
+				assert(parse[data](sock, user, password, db))
 			until data == "Z"
-			expectedPrepares[name] = query
-		end,
-		-- Run prepared statement
-		execute = function(self, name, ...)
-			local packet = build.Bind(name,...)..build.Describe()..build.Execute()..build.Sync()
-			assert(self._sock:send(packet))
-			local fieldNames,result = {},{}
-			-- Expecting BindComplete, RowDescription, DataRow, CommandComplete, and then ReadyForQuery
-			repeat
-				local data,err,partial = assert(sock:receive(1))
-				if data == "T" then
-					fieldNames = assert(parse[data](self._sock))
-				elseif	data == "D" then
-					local res = {}
-					for k,v in ipairs(assert(parse[data](self._sock))) do
-						res[fieldNames[k]] = v
-					end
-					result[#res+1] = res
-				else
-					assert(parse[data](self._sock))
-				end
-			until data == "Z"
-			return result
-		end,
-		query = function(self,query)
-			assert(self._sock:send(build.Query(query)))
-			local fieldNames,result = {},{}
-			-- Expecting RowDescription, DataRow, then ReadyForQuery
-			repeat
-				local data,err,partial = sock:receive(1)
-				if data == "T" then
-					fieldNames = assert(parse[data](self._sock))
-				elseif data == "D" then
-					local res = {}
-					for k,v in ipairs(assert(parse[data](self._sock))) do
-						res[fieldNames[k]] = v
-					end
-					result[#result+1] = res
-				else
-					assert(parse[data](self._sock))
-				end
-			until data == "Z"
-			return result
-		end,
-		disconnect = function(self)
-			self._sock:setkeepalive()
 		end
-	}})
-end
+		return setmetatable({_sock=sock},{ __index = {
+			prepare = function(self,name,query)
+				assert(self._sock:send(build.Parse(name,query)..build.Sync()))
+				repeat
+					local data,err,partial = assert(sock:receive(1))
+					assert(parse[data](self._sock))
+				until data == "Z"
+				expectedPrepares[name] = query
+			end,
+			-- Run prepared statement
+			execute = function(self, name, ...)
+				local packet = build.Bind(name,...)..build.Describe()..build.Execute()..build.Sync()
+				assert(self._sock:send(packet))
+				local fieldNames,result = {},{}
+				-- Expecting BindComplete, RowDescription, DataRow, CommandComplete, and then ReadyForQuery
+				repeat
+					local data,err,partial = assert(sock:receive(1))
+					if data == "T" then
+						fieldNames = assert(parse[data](self._sock))
+					elseif	data == "D" then
+						local res = {}
+						for k,v in ipairs(assert(parse[data](self._sock))) do
+							res[fieldNames[k]] = v
+						end
+						result[#res+1] = res
+					else
+						assert(parse[data](self._sock))
+					end
+				until data == "Z"
+				return result
+			end,
+			query = function(self,query)
+				assert(self._sock:send(build.Query(query)))
+				local fieldNames,result = {},{}
+				-- Expecting RowDescription, DataRow, then ReadyForQuery
+				repeat
+					local data,err,partial = sock:receive(1)
+					if data == "T" then
+						fieldNames = assert(parse[data](self._sock))
+					elseif data == "D" then
+						local res = {}
+						for k,v in ipairs(assert(parse[data](self._sock))) do
+							res[fieldNames[k]] = v
+						end
+						result[#result+1] = res
+					else
+						assert(parse[data](self._sock))
+					end
+				until data == "Z"
+				return result
+			end,
+			disconnect = function(self)
+				self._sock:setkeepalive()
+			end
+		}})
+	end
 
-return {connect = connect}
+	return {connect = connect}
