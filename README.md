@@ -14,7 +14,7 @@ db:disconnect() -- Puts connection into connection pool (sock:setkeepalive())
 
 ## API
 
-##### `connect(host,user,db,port)`
+##### `connect(host,user,password,db,port)`
 Returns a new db object
 
 ##### `db:query(query)`
