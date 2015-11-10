@@ -165,8 +165,12 @@ local parse = {
 		local res = {}
 		for i=1,rows do
 			local len = parsebyte4(data,pos)
-			res[i] = strsub(data,pos+4,pos+3+len)
-			pos = pos+4+len
+			if len == -1 then
+				pos = pos+4
+			else
+				res[i] = strsub(data,pos+4,pos+3+len)
+				pos = pos+4+len
+			end
 		end
 		return res
 	end,
@@ -263,7 +267,7 @@ local function connect(host, user, password, db, port)
 						fieldNames = assert(parse[data](self._sock))
 					elseif data == "D" then
 						local res = {}
-						for k,v in ipairs(assert(parse[data](self._sock))) do
+						for k,v in pairs(assert(parse[data](self._sock))) do
 							res[fieldNames[k]] = v
 						end
 						result[#result+1] = res
